@@ -1,0 +1,47 @@
+import {test} from 'node:test';import assert from 'node:assert/strict';import {mkdtemp,writeFile,rm} from 'node:fs/promises';import os from 'node:os';import path from 'node:path';
+import {startServer,passwordHash} from '../server/index.mjs';
+test('administrator actions and account-scoped snapshots remain isolated',async()=>{
+ const folder=await mkdtemp(path.join(os.tmpdir(),'kairos-accounts-'));
+ const state=revision=>({schema:1,events:[],pending:[],documents:[],revision});
+ Object.assign(process.env,{KAIROS_USER:'kevin',KAIROS_SALT:'owner-test',KAIROS_PASSWORD_HASH:passwordHash('owner-password','owner-test'),KAIROS_SYNC_TOKEN:'owner-sync-token',KAIROS_ADMIN_USER:'admin',KAIROS_ADMIN_SALT:'admin-test',KAIROS_ADMIN_HASH:passwordHash('admin-password','admin-test')});
+ await writeFile(path.join(folder,'snapshot.json'),JSON.stringify(state('private-owner-data')));
+ let app=await startServer({port:0,dataDir:folder});
+ const request=async(url,cookie,body,token)=>{const r=await fetch(app.url+url,{method:body===undefined?'GET':'POST',headers:{...(cookie?{Cookie:cookie}:{}),...(token?{Authorization:'Bearer '+token}:{}),'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body)});return {status:r.status,data:await r.json(),cookie:r.headers.get('set-cookie')?.split(';')[0]};};
+ const login=async(username,password)=>(await request('/api/login',null,{username,password}));
+ try{
+  const admin=(await login('admin','admin-password')).cookie,owner=(await login('kevin','owner-password')).cookie;
+  assert.equal((await request('/api/session',admin)).data.user.role,'admin');
+  assert.equal((await request('/api/state',owner)).data.revision,'private-owner-data');
+  assert.equal((await request('/api/state?userId=owner',admin)).status,403);
+  const adminHtml=await fetch(app.url+'/admin/');assert.equal(adminHtml.status,200);assert.match(await adminHtml.text(),/name="kairos-space" content="admin"/);
+  const adminRedirect=await fetch(app.url+'/admin',{redirect:'manual'});assert.equal(adminRedirect.status,308);assert.equal(adminRedirect.headers.get('location'),'/admin/');
+  assert.equal((await request('/api/admin/users',owner)).status,403);
+  assert.equal((await request('/api/admin/users',null,undefined,'owner-sync-token')).status,403);
+  const alice=await request('/api/admin/users',admin,{username:'alice',role:'admin'});
+  assert.equal(alice.status,201);assert.equal(alice.data.user.role,'user');
+  const a=alice.data;let aliceCookie=(await login('alice',a.password)).cookie;
+  assert.equal((await request('/api/admin/users',aliceCookie)).status,403);
+  assert.equal((await request('/api/sync',null,state('alice-private'),a.syncToken)).status,409);
+  assert.equal((await request('/api/workspace/sync',null,{changes:[{path:'goals/alice.md',version:null,content:'# Alice private goal',kind:'goal',records:[]}]},a.syncToken)).status,200);
+  assert.equal((await request('/api/state?userId=owner',aliceCookie)).data.documents[0].title,'Alice private goal');
+  assert.equal((await request('/api/state',owner)).data.revision,'private-owner-data');
+  assert.equal((await request('/api/state',admin)).status,403);
+  const listing=(await request('/api/admin/users',admin)).data.users;
+  assert.ok(listing.every(u=>!('passwordHash'in u)&&!('tokenHash'in u)&&!('salt'in u)));
+  assert.equal((await request('/api/admin/users',admin,{username:'../../escape'})).status,400);
+  await request('/api/admin/users/'+a.user.id,admin,{operation:'disable'});
+  assert.equal((await request('/api/state',aliceCookie)).status,401);
+  assert.equal((await request('/api/state',null,undefined,a.syncToken)).status,401);
+  await request('/api/admin/users/'+a.user.id,admin,{operation:'enable'});
+  aliceCookie=(await login('alice',a.password)).cookie;
+  const reset=await request('/api/admin/users/'+a.user.id,admin,{operation:'reset-password'});
+  assert.equal((await request('/api/state',aliceCookie)).status,401);
+  assert.equal((await login('alice',a.password)).status,401);
+  assert.equal((await login('alice',reset.data.password)).status,200);
+  const adminId=(await request('/api/session',admin)).data.user.id;
+  assert.equal((await request('/api/admin/users/'+adminId,admin,{operation:'disable'})).status,400);
+  await new Promise(resolve=>app.server.close(resolve));app=await startServer({port:0,dataDir:folder});
+  const after=(await login('admin','admin-password')).cookie;assert.equal((await request('/api/admin/users',after)).status,200);
+  assert.equal((await request('/api/state',null,undefined,a.syncToken)).data.documents[0].title,'Alice private goal');
+ }finally{await new Promise(resolve=>app.server.close(resolve));if(!path.resolve(folder).startsWith(path.resolve(os.tmpdir())+path.sep+'kairos-accounts-'))throw Error('Unexpected test folder');await rm(folder,{recursive:true,force:true});}
+});
