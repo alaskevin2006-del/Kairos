@@ -1,0 +1,40 @@
+const {app,BrowserWindow}=require('electron');
+const fs=require('node:fs/promises'),path=require('node:path');
+const {pathToFileURL}=require('node:url');
+const {randomBytes}=require('node:crypto');
+const base=path.resolve(__dirname,'..'),dir=path.join(base,'.private','ui-check');
+app.setPath('userData',path.join(dir,'electron'));
+async function run(){
+ await app.whenReady();await fs.mkdir(dir,{recursive:true});
+ const {startServer}=await import(pathToFileURL(path.join(base,'server/index.mjs')).href);
+ const token=randomBytes(32).toString('hex'),source=path.join(dir,'documents');
+ const service=await startServer({local:true,localToken:token,sourceRoot:()=>source,port:0,dataDir:path.join(dir,'state')});
+ const w=await service.workspace();
+ const today=new Intl.DateTimeFormat('sv-SE',{timeZone:'Asia/Shanghai'}).format(new Date());
+ const attention='## ① 近期\n'+Array.from({length:14},(_,i)=>`- [ ] **${today} 10:00–11:30｜重叠课程与个人事项长标题 ${i+1}** 来源：[测试](matters/测试.md)`).join('\n')+'\n- [ ] **'+today+'｜当天截止，时刻未知** 来源：[测试](matters/测试.md)\n## ④ 弹性\n'+Array.from({length:80},(_,i)=>`- [ ] 弹性事项 ${i+1}`).join('\n');
+ for(const [name,content] of [['matters/测试.md','# 测试 #长期\n\n这是界面验证用的合成文档。'],['_attention.md',attention],['journal/dairy/'+today+'.md','# 本人日记\n\n合成测试内容。'],['journal/AI/分析.md','# AI 分析\n\n合成分析。']]){const old=await w.read(name);await w.commit([{path:name,content,version:old.version}]);}
+ const jsDate=new Date(today+'T00:00:00Z'),dow=jsDate.getUTCDay()||7;jsDate.setUTCDate(jsDate.getUTCDate()-dow+1);
+ const monday=jsDate.toISOString().slice(0,10),html="const P = [{n:1,t:'10:00–11:30'}];const SEG = [{s:1,e:1,a:'"+monday+"'}];const C = ["+Array.from({length:4},(_,i)=>"{n:'真实课程测试"+i+"',t:'教师',l:'教室',w:[1],d:"+dow+",p:[1],c:'bi'}").join(',')+"];";
+ const oldCourse=await w.read('sources/courses.html');await w.commit([{path:'sources/courses.html',version:oldCourse.version,content:html}]);
+ const errors=[],win=new BrowserWindow({width:1280,height:900,show:false,webPreferences:{contextIsolation:true,nodeIntegration:false}});
+ win.webContents.on('console-message',(_event,level,message)=>{if(level>=3)errors.push(message);});
+ await win.webContents.session.cookies.set({url:service.url,name:'kairos',value:token,httpOnly:true,sameSite:'strict'});
+ await win.loadURL(service.url);await new Promise(r=>setTimeout(r,1500));
+ const js=code=>win.webContents.executeJavaScript(code);
+ const capture=async name=>fs.writeFile(path.join(dir,name+'.png'),(await win.webContents.capturePage()).toPNG());
+ const result={};
+ result.overview=await js(`({nav:[...document.querySelectorAll('nav a')].map(e=>e.textContent),eventCards:document.querySelectorAll('.event').length,collapsed:document.querySelector('.event .more')?.textContent,bodyWidth:document.body.scrollWidth,innerWidth})`);
+ await capture('overview');
+ await js(`document.querySelector('.event').click()`);await new Promise(r=>setTimeout(r,200));
+ result.expanded=await js(`document.querySelectorAll('[data-day-item]').length`);await capture('expanded');
+ await js(`document.querySelector('dialog .close').click();location.hash='reviews'`);await new Promise(r=>setTimeout(r,200));await capture('journal');
+ await js(`document.querySelector('#edit-current').click()`);await new Promise(r=>setTimeout(r,400));
+ await js(`document.querySelector('#toggle-edit').click()`);await new Promise(r=>setTimeout(r,100));result.editor=await js(`!!document.querySelector('#doc-source')`);await capture('editor');
+ await js(`document.querySelector('#doc-source').value+='\\n人工保存验证';document.querySelector('#doc-source').dispatchEvent(new Event('input'));document.querySelector('#save-doc').click()`);await new Promise(r=>setTimeout(r,350));result.saved=(await w.read('journal/AI/分析.md')).content.includes('人工保存验证');
+ await js(`document.querySelector('dialog .close').click();location.hash='overview'`);await new Promise(r=>setTimeout(r,200));win.setSize(800,800);await new Promise(r=>setTimeout(r,400));await capture('narrow');
+ result.narrow=await js(`({bodyWidth:document.body.scrollWidth,innerWidth,cardWidth:document.querySelector('.event')?.getBoundingClientRect().width})`);
+ result.errors=errors;await fs.writeFile(path.join(dir,'report.json'),JSON.stringify(result,null,2));
+ if(result.expanded!==19||!result.editor||!result.saved||errors.length)throw Error('UI checks failed: '+JSON.stringify(result));
+ win.destroy();await new Promise(r=>service.server.close(r));app.quit();
+}
+run().catch(async e=>{await fs.mkdir(dir,{recursive:true});await fs.writeFile(path.join(dir,'failure.txt'),e.stack);app.exit(1);});

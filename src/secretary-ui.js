@@ -1,4 +1,4 @@
-export function secretaryUI({api,esc,markdown,modal,toast,refresh,localSettings}){
+export function secretaryUI({api,esc,markdown,modal,toast,refresh,localSettings,openDocument,browseFiles}){
  let threadId=null,thread=null,threads=[],connections=[],defaultId=null,connectionId='',focus='tasks',draft='',loading=false,problem='',sending=false,requestId=null,generation=0;
  const stamp=s=>new Date(s).toLocaleString('zh-CN',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'});
  const linkFiles=t=>t.files.map(f=>`<button class="file-link" data-open-file="${esc(f.path)}">${esc(f.path)}</button>`).join('');
@@ -19,7 +19,8 @@ export function secretaryUI({api,esc,markdown,modal,toast,refresh,localSettings}
  async function load(){if(loading)return;loading=true;const g=generation;try{const data=await api('/api/connections'),list=await api('/api/secretary/threads'),current=threadId?await api('/api/secretary/thread?id='+encodeURIComponent(threadId)):null;if(g!==generation)return;connections=data.connections;defaultId=data.defaultId;threads=list.threads;thread=current;paint();}catch(e){if(g===generation){problem=e.message;paint();}}finally{if(g===generation)loading=false;}}
  async function tick(){if(!document.querySelector('#secretary-mount')||document.hidden||loading)return;if(thread?.turns.some(t=>t.status==='running')||threads.some(t=>t.running)){const old=JSON.stringify(thread),g=generation;try{const current=threadId?await api('/api/secretary/thread?id='+encodeURIComponent(threadId)):null,list=await api('/api/secretary/threads');if(g!==generation)return;thread=current;threads=list.threads;if(old!==JSON.stringify(thread)){paint();await refresh();}}catch(e){if(g===generation){problem=e.message;paint();}}}}
  setInterval(tick,1800);
- async function openFile(p){try{const f=await api('/api/workspace/document?path='+encodeURIComponent(p));modal(`<h2>${esc(p.split('/').pop())}</h2><div class="markdown">${markdown(f.content||'（空文档）')}</div><p class="source">${esc(p)}</p>`);}catch(e){toast(e.message);}}
+ async function openFile(p){return openDocument(p);}
+
  function bindFileLinks(el){el.querySelectorAll('[data-open-file]').forEach(b=>b.onclick=()=>openFile(b.dataset.openFile));}
  function bindUndo(el){el.querySelectorAll('[data-undo]').forEach(b=>b.onclick=async()=>{b.disabled=true;try{await api('/api/workspace/undo',{id:b.dataset.undo});toast('已撤销，原版本仍可恢复');await refresh();b.textContent='已撤销';}catch(e){b.disabled=false;toast(e.message);}});}
  async function history(){try{const {history:items}=await api('/api/workspace/history');const d=modal(`<h2>修改记录</h2><div class="history-items">${items.map(t=>`<section class="history-item"><strong>${esc(t.label)}</strong><small>${stamp(t.at)}</small>${linkFiles(t)}${t.files.length?`<button class="quiet" data-undo="${esc(t.id)}">撤销</button>`:''}</section>`).join('')||'<p class="subtle">尚无文档修改</p>'}</div>`);bindFileLinks(d);bindUndo(d);}catch(e){toast(e.message);}}
@@ -32,7 +33,7 @@ export function secretaryUI({api,esc,markdown,modal,toast,refresh,localSettings}
    d.querySelector('#delete-connection')?.addEventListener('click',async()=>{try{await api('/api/connections',{operation:'delete',id:c.id});d.close();await load();toast('连接已删除');}catch(e){d.querySelector('#connection-error').textContent=e.message;}});
   }catch(e){toast(e.message);}
  }
- function settings(){const d=modal(`<h2>设置</h2><div class="settings-choices"><button id="open-models">模型连接</button><button id="open-history">文档修改记录</button>${window.kairos?'<button id="open-local">本地目录与同步</button>':''}</div>`);d.querySelector('#open-models').onclick=()=>modelSettings();d.querySelector('#open-history').onclick=history;d.querySelector('#open-local')?.addEventListener('click',localSettings);}
+ function settings(){const d=modal(`<h2>设置</h2><button id="browse-files">浏览文件／新建／导入课表</button><div class="settings-choices"><button id="open-models">模型连接</button><button id="open-history">文档修改记录</button>${window.kairos?'<button id="open-local">本地目录</button>':''}</div>`);d.querySelector('#browse-files').onclick=browseFiles;d.querySelector('#open-models').onclick=()=>modelSettings();d.querySelector('#open-history').onclick=history;d.querySelector('#open-local')?.addEventListener('click',localSettings);}
  function reset(){generation++;threadId=null;thread=null;threads=[];connections=[];defaultId=null;connectionId='';focus='tasks';draft='';loading=false;problem='';sending=false;requestId=null;}
  return{html,bind:()=>{paint();load();},settings,openFile,reset};
 }

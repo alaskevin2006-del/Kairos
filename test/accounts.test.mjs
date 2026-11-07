@@ -21,9 +21,9 @@ test('administrator actions and account-scoped snapshots remain isolated',async(
   assert.equal(alice.status,201);assert.equal(alice.data.user.role,'user');
   const a=alice.data;let aliceCookie=(await login('alice',a.password)).cookie;
   assert.equal((await request('/api/admin/users',aliceCookie)).status,403);
-  assert.equal((await request('/api/sync',null,state('alice-private'),a.syncToken)).status,409);
-  assert.equal((await request('/api/workspace/sync',null,{changes:[{path:'goals/alice.md',version:null,content:'# Alice private goal',kind:'goal',records:[]}]},a.syncToken)).status,200);
-  assert.equal((await request('/api/state?userId=owner',aliceCookie)).data.documents[0].title,'Alice private goal');
+  assert.equal((await request('/api/sync',null,state('alice-private'),a.syncToken)).status,410);
+  assert.equal((await request('/api/workspace/commit',aliceCookie,{changes:[{path:'matters/alice.md',version:null,content:'# Alice private goal #长期'}]})).status,200);
+  assert.equal((await request('/api/state?userId=owner',aliceCookie)).data.documents[0].title,'Alice private goal #长期');
   assert.equal((await request('/api/state',owner)).data.revision,'private-owner-data');
   assert.equal((await request('/api/state',admin)).status,403);
   const listing=(await request('/api/admin/users',admin)).data.users;
@@ -42,6 +42,6 @@ test('administrator actions and account-scoped snapshots remain isolated',async(
   assert.equal((await request('/api/admin/users/'+adminId,admin,{operation:'disable'})).status,400);
   await new Promise(resolve=>app.server.close(resolve));app=await startServer({port:0,dataDir:folder});
   const after=(await login('admin','admin-password')).cookie;assert.equal((await request('/api/admin/users',after)).status,200);
-  assert.equal((await request('/api/state',null,undefined,a.syncToken)).data.documents[0].title,'Alice private goal');
+  assert.equal((await request('/api/state',null,undefined,a.syncToken)).data.documents[0].title,'Alice private goal #长期');
  }finally{await new Promise(resolve=>app.server.close(resolve));if(!path.resolve(folder).startsWith(path.resolve(os.tmpdir())+path.sep+'kairos-accounts-'))throw Error('Unexpected test folder');await rm(folder,{recursive:true,force:true});}
 });

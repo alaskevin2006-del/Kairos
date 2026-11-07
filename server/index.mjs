@@ -1,3 +1,4 @@
+import {parseCourses} from './courses.mjs';
 import http from 'node:http';
 import {readFile,writeFile,mkdir,rename} from 'node:fs/promises';
 import path from 'node:path';
@@ -57,8 +58,9 @@ export async function startServer(options={}) {
     const localSigned=local&&eq(cookie,options.localToken);
     async function body(){let size=0;const parts=[];for await(const chunk of req){size+=chunk.length;if(size>16*1024*1024)throw Error('内容过大');parts.push(chunk);}return JSON.parse(Buffer.concat(parts).toString('utf8')||'{}');}
     try {
+      if(local&&url.pathname==='/local-open'&&eq(url.searchParams.get('token'),options.localToken)){res.writeHead(303,{'Set-Cookie':`kairos=${options.localToken}; HttpOnly; SameSite=Strict; Path=/`,Location:'/'});return res.end();}
       if(url.pathname==='/healthz'){return send(200,{ok:true});}
-      if(url.pathname==='/api/session'&&req.method==='GET')return send(200,{authenticated:local?localSigned:signed,local,user:signed?accounts.publicUser(sessionUser):null});
+      if(url.pathname==='/api/session'&&req.method==='GET')return send(200,{authenticated:local?localSigned:signed,local,spaceId:local?hash(options.sourceRoot()):user?.id,user:signed?accounts.publicUser(sessionUser):null});
       if(url.pathname==='/api/login'&&req.method==='POST'&&!local) {
         const origin=req.headers.origin;if(origin&&new URL(origin).host!==req.headers.host)return send(403,{error:'请求来源不匹配'});
         const ip=req.socket.remoteAddress,now=Date.now();let limit=attempts.get(ip)||{count:0,time:now};if(now-limit.time>900000)limit={count:0,time:now};if(limit.count>=10)return send(429,{error:'尝试次数较多，请15分钟后重试'});
@@ -71,6 +73,7 @@ export async function startServer(options={}) {
         const bearer=!!tokenUser;
         if(!(local?localSigned:!!user))return send(401,{error:'请先登录'});
         if(req.method==='POST') {const origin=req.headers.origin;if(origin&&new URL(origin).host!==req.headers.host)return send(403,{error:'请求来源不匹配'});}
+        if(['/api/sync','/api/workspace/sync','/api/workspace/import'].includes(url.pathname))return send(410,{error:'跨端同步和快照导入已禁用；请在当前空间编辑文件'});
         if(url.pathname==='/api/logout'&&req.method==='POST'){sessions.delete(cookie);res.setHeader('Set-Cookie',`kairos=; Max-Age=0; HttpOnly; SameSite=Strict; Path=${cookiePath}`);return send(200,{ok:true});}
         if(url.pathname.startsWith('/api/admin/')){
           if(local||!signed||sessionUser.role!=='admin'||bearer)return send(403,{error:'仅管理员可执行此操作'});
@@ -102,10 +105,12 @@ export async function startServer(options={}) {
             for(let i=0;i<files.length;i+=30){const batch=files.slice(i,i+30).map(f=>({...f,version:null}));await w.commit(batch,{label:'导入本地 Markdown',allowRules:true});}
             await w.commit([],{mode:'files',baseCourses:(old.events||[]).filter(e=>e.kind==='course'),label:'启用文档空间'});return send(200,{ok:true,files:data.files.length});
           }
-          if(url.pathname==='/api/workspace/files'&&req.method==='GET'){if(w.mode()!=='files')throw new UserError('请先从新版客户端导入原始文档',409);return send(200,{files:(await w.list()).map(f=>({...f,records:w.index(f.path)?.hash===f.version?w.index(f.path).records:null,kind:w.kind(f.path)||null}))});}
+          if(url.pathname==='/api/workspace/files'&&req.method==='GET'){return send(200,{files:(await w.list()).map(f=>({...f,records:w.index(f.path)?.hash===f.version?w.index(f.path).records:null,kind:w.kind(f.path)||null}))});}
           if(url.pathname==='/api/workspace/sync'&&req.method==='POST'){if(w.mode()!=='files')throw new UserError('请先导入原始文档',409);const data=await body();let courses;if(data.courses){validateSnapshot({schema:1,events:data.courses,pending:[],documents:[]});if(data.courses.some(e=>e.kind!=='course'))throw new UserError('课表来源类型无效');if(JSON.stringify(data.courses)!==JSON.stringify(w.courses()))courses=data.courses;}if(!data.changes?.length&&!courses)return send(200,{ok:true});return send(200,await w.commit(data.changes,{label:'同步本地文档',allowRules:true,baseCourses:courses}));}
           if(url.pathname==='/api/workspace/complete'&&req.method==='POST'){if(w.mode()!=='files')throw new UserError('请先导入原始文档',409);return send(200,await w.complete((await body()).id));}
-          if(url.pathname==='/api/workspace/note'&&req.method==='POST'){if(w.mode()!=='files')throw new UserError('请先导入原始文档',409);const data=await body();if(typeof data.content!=='string'||!data.content.trim()||data.content.length>60000)throw new UserError('请输入要保存的原文');const name='inbox/输入-'+new Date().toISOString().replace(/[:.]/g,'-')+'-'+randomBytes(3).toString('hex')+'.md';return send(200,await w.commit([{path:name,version:null,content:data.content,kind:'note',records:[]}],{label:'保存原文'}));}
+          if(url.pathname==='/api/workspace/note'&&req.method==='POST'){if(w.mode()!=='files')throw new UserError('请先导入原始文档',409);const data=await body();if(typeof data.content!=='string'||!data.content.trim()||data.content.length>60000)throw new UserError('请输入要保存的原文');const name='sources/输入-'+new Date().toISOString().replace(/[:.]/g,'-')+'-'+randomBytes(3).toString('hex')+'.md';return send(200,await w.commit([{path:name,version:null,content:data.content,kind:'note',records:[]}],{label:'保存原文'}));}
+          if(url.pathname==='/api/workspace/commit'&&req.method==='POST'){const data=await body();return send(200,await w.commit(data.changes,{label:'人工编辑',allowDelete:true,allowRules:true,mode:'files'}));}
+          if(url.pathname==='/api/workspace/courses'&&req.method==='POST'){const data=await body();if(typeof data.content!=='string'||Buffer.byteLength(data.content)>2*1024*1024)throw new UserError('课表不能超过 2 MB');const events=parseCourses(data.content);if(!events.length)throw new UserError('未识别到有效课程；目前支持包含 P、SEG、C 字面量数据的课表 HTML，请核对节次、周次、日期与时间');return send(200,await w.commit([{path:'sources/courses.html',version:data.version,content:data.content}],{label:'导入课表',mode:'files'}));}
           if(url.pathname==='/api/workspace/history'&&req.method==='GET')return send(200,{history:w.history()});
           if(url.pathname==='/api/workspace/undo'&&req.method==='POST')return send(200,await w.undo((await body()).id));
           if(url.pathname==='/api/workspace/document'&&req.method==='GET')return send(200,await w.read(url.searchParams.get('path')));
@@ -135,5 +140,5 @@ if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href){
   const token=local?randomBytes(32).toString('hex'):null;
   const app=await startServer({local,sourceRoot:()=>process.env.KAIROS_SOURCE,localToken:token,host:process.env.HOST||'127.0.0.1'});
   console.log(`Kairos: ${app.url}`);
-  if(local)console.log('Local mode is intended for the desktop app.');
+  if(local)console.log('打开本地网页：'+app.url+'/local-open?token='+token);
 }

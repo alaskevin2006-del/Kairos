@@ -9,7 +9,7 @@ async function fixture(fn){const dir=await mkdtemp(path.join(os.tmpdir(),'kairos
 test('free Markdown, calendar projection, recurrence completion, undo and restart',()=>fixture(async(w,opts)=>{
  const content='# 自由的目标\n\n不需要固定标题或模板。\n周四晚上复习，提交截止 11/8。';
  const saved=await w.commit([{path:'goals/考试.md',version:null,content,kind:'goal',records:[{id:'routine',title:'复习',kind:'event',date:'2026-11-05',start:1200,end:1260,repeat:{days:[4],from:'2026-11-05',until:'2026-11-12'}},{id:'due',title:'提交',kind:'deadline',date:'2026-11-08'},{id:'unknown',title:'另一件事',kind:'pending'}]}]);
- let state=await w.state();assert.equal(state.events.length,3);assert.equal(state.pending.length,1);assert.equal(state.events.find(e=>e.recordId==='due').start,1440);assert.equal(state.documents[0].markdown,content);
+ let state=await w.state();assert.equal(state.events.length,3);assert.equal(state.pending.length,1);assert.equal(state.events.find(e=>e.recordId==='due').start,0);assert.equal(state.documents[0].markdown,content);
  const item=state.events.find(e=>e.recordId==='routine'&&e.date==='2026-11-05'),done=await w.complete(item.id);state=await w.state();assert.equal(state.events.find(e=>e.id===item.id).done,true);assert.equal(state.events.find(e=>e.recordId==='routine'&&e.date==='2026-11-12').done,false);
  assert.match((await w.read('goals/考试.md')).content,/已完成/);await w.undo(done.id);assert.equal((await w.state()).events.find(e=>e.id===item.id).done,false);
  const restarted=await openWorkspace(opts);assert.equal((await restarted.read('goals/考试.md')).content,content);assert.equal((await restarted.state()).events.length,3);
@@ -25,10 +25,6 @@ test('conflicts reject the entire batch before any source changes',()=>fixture(a
 test('interrupted file transaction is recovered without losing the prior version',()=>fixture(async(w,opts)=>{
  await w.commit([{path:'a.md',version:null,content:'before'}]);await writeFile(path.join(opts.privateDir,'pending.json'),JSON.stringify({id:'interrupted',before:[{path:'a.md',content:'before'}]}));await writeFile(path.join(opts.root,'a.md'),'half written');
  const recovered=await openWorkspace(opts);assert.equal((await recovered.read('a.md')).content,'before');
-}));
-test('legacy completion feedback is durable and does not finish sibling tasks',()=>fixture(async(w)=>{
- await w.commit([{path:'_attention.md',version:null,content:'# Attention\n最近整理：2026-11-05\n## 今日\n- [ ] A 11/5 / B 11/5'}]);
- const s=await w.state();assert.equal(s.events.length,2);const done=await w.complete(s.events[0].id);const after=await w.state();assert.equal(after.events[0].done,true);assert.equal(after.events[1].done,false);await w.undo(done.id);const undone=await w.state();assert.equal(undone.events.length,2);assert.equal(undone.events[0].done,false);
 }));
 test('three-way sync preserves concurrent edits and first-connection differences',()=>{
  const f=(content)=>({path:'a.md',version:hash(content),content,records:null,kind:null});const old=f('old'),l=f('local'),r=f('remote');
