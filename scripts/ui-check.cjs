@@ -24,7 +24,7 @@ async function run(){
  const capture=async name=>fs.writeFile(path.join(dir,name+'.png'),(await win.webContents.capturePage()).toPNG());
  const result={};
  result.overview=await js(`({nav:[...document.querySelectorAll('nav a')].map(e=>e.textContent),eventCards:document.querySelectorAll('.event').length,collapsed:document.querySelector('.event .more')?.textContent,bodyWidth:document.body.scrollWidth,innerWidth})`);
- result.agenda=await js(`document.querySelector('.agenda-loose').textContent.includes('当天截止')&&document.querySelector('.agenda').textContent.includes('近期截止')`);await capture('overview');
+ result.agenda=await js(`document.querySelector('.agenda-loose').textContent.includes('当天截止')&&document.querySelector('.upcoming-deadlines').textContent.includes('近期截止')&&document.querySelector('.agenda').textContent.includes('有空再做')`);await capture('overview');
  await js(`document.querySelector('.event').click()`);await new Promise(r=>setTimeout(r,200));
  result.expanded=await js(`document.querySelectorAll('[data-day-item]').length`);await capture('expanded');
  await js(`document.querySelector('dialog .close').click();location.hash='reviews'`);await new Promise(r=>setTimeout(r,200));await capture('journal');
@@ -33,8 +33,12 @@ async function run(){
  await js(`document.querySelector('#doc-source').value+='\\n人工保存验证';document.querySelector('#doc-source').dispatchEvent(new Event('input'));document.querySelector('#save-doc').click()`);await new Promise(r=>setTimeout(r,350));result.saved=(await w.read('journal/AI/分析.md')).content.includes('人工保存验证');
  await js(`document.querySelector('dialog .close').click();location.hash='overview'`);await new Promise(r=>setTimeout(r,200));win.setSize(800,800);await new Promise(r=>setTimeout(r,400));await capture('narrow');
  result.narrow=await js(`({bodyWidth:document.body.scrollWidth,innerWidth,cardWidth:document.querySelector('.event')?.getBoundingClientRect().width})`);
+ await js(`location.hash='secretary'`);await new Promise(r=>setTimeout(r,350));
+ result.secretary=await js(`document.querySelector('#new-thread').disabled&&!!document.querySelector('#chat-files')&&!!document.querySelector('.secretary-reference')&&!document.querySelector('#save-raw')`);
+ await js(`document.querySelector('#reference-attention').click()`);
+ result.attention=await js(`document.querySelector('.attention-preview').textContent.includes('近期')`);
  result.errors=errors;await fs.writeFile(path.join(dir,'report.json'),JSON.stringify(result,null,2));
- if(result.expanded!==19||!result.agenda||!result.editor||!result.saved||errors.length)throw Error('UI checks failed: '+JSON.stringify(result));
+ if(result.expanded!==19||!result.agenda||!result.editor||!result.saved||!result.secretary||!result.attention||errors.length)throw Error('UI checks failed: '+JSON.stringify(result));
  win.destroy();await new Promise(r=>service.server.close(r));app.quit();
 }
 run().catch(async e=>{await fs.mkdir(dir,{recursive:true});await fs.writeFile(path.join(dir,'failure.txt'),e.stack);app.exit(1);});

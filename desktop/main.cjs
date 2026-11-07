@@ -19,6 +19,15 @@ async function main(){
   win.webContents.session.setPermissionRequestHandler((wc,permission,callback)=>callback(false));
   await win.webContents.session.cookies.set({url:service.url,name:'kairos',value:token,httpOnly:true,sameSite:'strict',path:'/'});
   const trusted=event=>{if(event.sender!==win.webContents||event.senderFrame?.url?.startsWith(service.url+'/')!==true)throw Error('不允许的请求');};
+  ipcMain.handle('workspace:obsidian',async(event,file)=>{
+    trusted(event);
+    if(typeof file!=='string'||!file.endsWith('.md')||path.isAbsolute(file))throw Error('请选择工作区内的 Markdown 文件');
+    const root=await fs.realpath(config.sourceRoot);
+    const target=await fs.realpath(path.resolve(root,file));
+    const relative=path.relative(root,target);
+    if(!relative||relative.startsWith('..'+path.sep)||path.isAbsolute(relative)||!(await fs.stat(target)).isFile())throw Error('无法打开工作区外的文件');
+    await shell.openExternal('obsidian://open?path='+encodeURIComponent(target));
+  });
   ipcMain.handle('settings:get',async event=>{trusted(event);return{sourceRoot:config.sourceRoot,courseFile:config.courseFile,remoteUrl:config.remoteUrl,autoSync:false};});
   ipcMain.handle('settings:cloud',async event=>{trusted(event);if(config.remoteUrl)await shell.openExternal(config.remoteUrl);});
   ipcMain.handle('settings:folder',async event=>{trusted(event);const result=await dialog.showOpenDialog(win,{properties:['openDirectory']});return result.canceled?null:result.filePaths[0];});
