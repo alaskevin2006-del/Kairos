@@ -1,19 +1,20 @@
 export function documentEditor({api,esc,markdown,modal,toast,refresh,account}){
  let active=null;
- async function openFile(p){
+ async function openFile(p,{edit=false}={}){
   const [name,anchor]=p.split('#');
   try{
    const f=await api('/api/workspace/document?path='+encodeURIComponent(name));
    if(f.content===null){toast('链接不存在：'+name);return;}
    const key='kairos-draft:'+account()+':'+name;
-   let draft=localStorage.getItem(key)??f.content,editing=draft!==f.content,version=f.version;
+   let savedDraft;try{savedDraft=JSON.parse(localStorage.getItem(key));}catch{}
+   let draft=savedDraft?.content??f.content,editing=edit||draft!==f.content,version=savedDraft?.version??f.version;
    const d=modal('');active={path:name,version,dialog:d,dirty:()=>draft!==f.content};
    const paint=()=>{
     d.classList.add('editor-dialog');d.innerHTML=`<button class="close" aria-label="关闭">×</button><h2>${esc(name)}</h2><div class="form-actions"><button id="toggle-edit" class="quiet">${editing?'阅读预览':'编辑源码'}</button><button id="save-doc" class="primary">保存</button><button id="reload-doc" class="quiet">比较／重新读取</button><button id="delete-doc" class="quiet">删除文件</button></div><p id="save-state" role="status">${draft===f.content?'已保存':'有未保存草稿（保存在本机）'}</p>${editing?`<textarea id="doc-source" spellcheck="false" aria-label="Markdown 源码">${esc(draft)}</textarea>`:`<article class="markdown">${markdown(draft)}</article>`}`;
     d.querySelector('.close').onclick=()=>d.close();
     d.querySelector('#toggle-edit').onclick=()=>{editing=!editing;paint();};
-    d.querySelector('#doc-source')?.addEventListener('input',e=>{draft=e.target.value;localStorage.setItem(key,draft);d.querySelector('#save-state').textContent='未保存 · 草稿已保留';});
-    d.querySelector('#save-doc').onclick=async()=>{try{await api('/api/workspace/commit',{changes:[{path:name,content:draft,version}]});const saved=await api('/api/workspace/document?path='+encodeURIComponent(name));version=saved.version;f.content=draft;active.version=version;localStorage.removeItem(key);paint();await refresh();}catch(e){d.querySelector('#save-state').textContent=e.message+'；草稿已保留，请比较新版本。';}};
+    d.querySelector('#doc-source')?.addEventListener('input',e=>{draft=e.target.value;localStorage.setItem(key,JSON.stringify({content:draft,version}));d.querySelector('#save-state').textContent='未保存 · 草稿已保留';});
+    d.querySelector('#save-doc').onclick=async()=>{try{const saved=await api('/api/workspace/commit',{changes:[{path:name,content:draft,version}]});version=saved.files.find(f=>f.path===name).version;f.content=draft;active.version=version;localStorage.removeItem(key);paint();await refresh();}catch(e){d.querySelector('#save-state').textContent=e.message+'；草稿已保留，请比较新版本。';}};
     d.querySelector('#reload-doc').onclick=async()=>{try{const latest=await api('/api/workspace/document?path='+encodeURIComponent(name));let comparison=d.querySelector('.comparison');if(!comparison){comparison=document.createElement('section');comparison.className='comparison';d.append(comparison);}comparison.innerHTML=`<h3>磁盘最新版本</h3><pre>${esc(latest.content??'文件已删除')}</pre><button id="adopt-disk">采用磁盘版本（替换当前草稿）</button>`;comparison.querySelector('button').onclick=()=>{if(!confirm('用磁盘版本替换当前草稿？'))return;draft=f.content=latest.content||'';version=latest.version;localStorage.removeItem(key);paint();};}catch(e){toast(e.message);}};
     d.querySelector('#delete-doc').onclick=async()=>{if(!confirm('删除 '+name+'？可从修改记录恢复。'))return;try{await api('/api/workspace/commit',{changes:[{path:name,version,content:null}]});localStorage.removeItem(key);d.close();await refresh(true);}catch(e){toast(e.message);}};
     d.querySelectorAll('.markdown a').forEach(a=>{const href=a.getAttribute('href');if(!href||href.startsWith('#'))return;if(/^https?:/.test(href)){a.target='_blank';a.rel='noopener';return;}a.onclick=e=>{e.preventDefault();const base=new URL(name,'https://workspace.invalid/');const target=new URL(href,base);if(target.origin!==base.origin)return toast('不支持此链接');openFile(decodeURIComponent(target.pathname.slice(1))+target.hash);};});

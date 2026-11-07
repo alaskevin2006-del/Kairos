@@ -24,10 +24,10 @@ export function parseItems(text,source,today=new Intl.DateTimeFormat('sv-SE',{ti
   if(time&&(+time[1]>23||+time[2]>59||time[3]&&(+time[3]>23||+time[4]>59)))continue;
   const start=time?+time[1]*60+ +time[2]:0,end=time?.[3]?+time[3]*60+ +time[4]:start;if(end<start)continue;
   const link=[...m[2].matchAll(/\[[^\]]+\]\(([^)]+)\)/g)].map(x=>resolveLink(source,x[1])).find(x=>x?.path.startsWith('matters/'));
-  const bold=m[2].match(/^\*\*([^*]+)\*\*/)?.[1];const title=plain(bold&&!/^20\d{2}-\d{2}-\d{2}(?:\s+\d{2}:\d{2})?$/.test(bold)?bold:m[2]).replace(/^20\d{2}-\d{2}-\d{2}(?:\s+\d{2}:\d{2}(?:[–—-]\d{2}:\d{2})?)?(?:（[^）]*）)?\s*[｜|：:]?\s*/,'').split(/来源[：:]|。/)[0];
-  const done=/x/i.test(m[1]||'')||m[1]===undefined&&/(?:已完成并提交|已提交|已取消)/.test(body)&&!/未提交|不自动|未知/.test(body),date=stamp?.[1]||null,kind=/DDL|截止|提交|交付/i.test(title)?'deadline':time?.[3]?'event':date?'date':'pending';
+  const bold=m[2].match(/^\*\*([^*]+)\*\*/)?.[1];const title=plain(bold&&!/^20\d{2}-\d{2}-\d{2}(?:\s+\d{2}:\d{2})?$/.test(bold)?bold:m[2]).replace(/^20\d{2}-\d{2}-\d{2}(?:\s+\d{2}:\d{2}(?:[–—-]\d{2}:\d{2})?)?(?:\s*前)?(?:（[^）]*）)?\s*[｜|：:]?\s*/,'').split(/来源[：:]|。/)[0];
+  const done=/x/i.test(m[1]||'')||m[1]===undefined&&/(?:已完成并提交|已提交|已取消)/.test(body)&&!/未提交|不自动|未知/.test(body),date=stamp?.[1]||null,kind=(/DDL|截止|提交|交付/i.test(title)||/20\d{2}-\d{2}-\d{2}\s*前(?=\s|[（｜|：:])/.test(body))?'deadline':time?.[3]?'event':date?'date':'pending';
   const status=/待核实|结果未知|提交状态未知/.test(section+' '+body)||date&&date<today&&!done?'unverified':done?'done':'open';
-  items.push({id:hash(source+'|'+raw),title,content:raw,source:link?.path||source,anchor:link?.anchor,indexSource:source,line:line+1,section,date,kind,start,end,timeKnown:!!time,defaultTime:!time,done,status,important:/#重要|重要程度[：:]\s*高/.test(raw),dueAt:kind==='deadline'&&time?`${date}T${time[1]}:${time[2]}:00+08:00`:null,editable:false});
+  items.push({id:hash(source+'|'+raw),title,content:raw,source:link?.path||source,anchor:link?.anchor,indexSource:source,line:line+1,section,date,kind,start,end,timeHint:!time&&date?body.slice(stamp.index+10).split(/[｜|]/)[0].match(/凌晨|清晨|早上|上午|中午|下午|傍晚|晚上|夜间/)?.[0]:null,timeKnown:!!time,defaultTime:!time,done,status,important:/#重要|重要程度[：:]\s*高/.test(raw),dueAt:kind==='deadline'&&time?`${date}T${time[1]}:${time[2]}:00+08:00`:null,editable:false});
  }
  const recurring=[];
  for(let i=items.length-1;i>=0;i--){const item=items[i];if(!/每周|每天|每日/.test(item.content))continue;
